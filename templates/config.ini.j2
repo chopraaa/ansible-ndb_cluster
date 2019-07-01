@@ -1,0 +1,21 @@
+[ndbd default]
+# Options affecting ndbd processes on all data nodes
+NoOfReplicas={{ groups['ndb-slaves'] | length }} # Number of replicas
+
+{% for host in groups['ndb-master'] %}
+[ndb_mgmd]
+# Management process options:
+hostname={{ hostvars[host].ansible_private_host }} # Hostname of the manager
+datadir=/var/lib/mysql-cluster # Directory of the log files
+
+{% endfor %}
+{% for host in groups['ndb-slaves'] %}
+[ndbd]
+hostname={{ hostvars[host].ansible_private_host }} # Hostname/IP of the {{ loop.index }} data node
+NodeId={{ loop.index + 1 }} # Node Id for this data node
+datadir=/usr/local/mysql/data # Remote directory for the data files
+
+{% endfor %}
+[mysqld]
+# SQL node options
+hostname={{ hostvars['master'].ansible_private_host }} # In our case the MySQL server/client is on the same server as the ndb_mgmd node

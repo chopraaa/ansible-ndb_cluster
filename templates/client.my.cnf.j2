@@ -1,0 +1,10 @@
+!includedir /etc/mysql/conf.d/
+!includedir /etc/mysql/mysql.conf.d/
+
+[mysqld]
+# Options for mysqld process:
+ndbcluster # run NDB storage engine
+
+[mysql_cluster]
+# Options for NDB Cluster processes:
+ndb-connectstring={{ hostvars['master'].ansible_private_host }} # location of management server

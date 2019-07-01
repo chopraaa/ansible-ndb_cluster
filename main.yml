@@ -1,0 +1,148 @@
+---
+- hosts: ndb-master
+  become: True
+  vars:
+    management_server_file: "https://dev.mysql.com/get/Downloads/MySQL-Cluster-7.6/mysql-cluster-community-management-server_7.6.9-1ubuntu18.04_amd64.deb"
+    management_server_md5: "a66748aa5bc2af891f6d5a34e936eb4e"
+  tasks:
+    - name: Download management server
+      get_url:
+        url: "{{ management_server_file }}"
+        dest: /tmp
+        checksum: md5:{{ management_server_md5 }}
+      register: result
+
+    - name: Install management server
+      apt:
+        deb: "{{ result.dest }}"
+
+    - name: Create mysql-cluster directory
+      file:
+        path: /var/lib/mysql-cluster
+        state: directory
+
+    - name: Create mysql-cluster/config.ini
+      template:
+        src: templates/config.ini.j2
+        dest: /var/lib/mysql-cluster/config.ini
+
+    - name: Create systemd config
+      template:
+        src: templates/ndb_mgmd.service.j2
+        dest: /etc/systemd/system/ndb_mgmd.service
+      notify: Enable and start the ndb_mgmd service
+
+  handlers:
+    - name: Enable and start the ndb_mgmd service
+      service:
+        name: ndb_mgmd
+        state: started
+        enabled: True
+        daemon_reload: True # systemctl daemon-reload
+
+- hosts: ndb-slaves
+  become: True
+  vars:
+    data_node_file: "https://dev.mysql.com/get/Downloads/MySQL-Cluster-7.6/mysql-cluster-community-data-node_7.6.9-1ubuntu18.04_amd64.deb"
+    data_node_md5: "91a3385f93462218c8fef611cb5dfabe"
+  tasks:
+    - name: Download the data node file
+      get_url:
+        url: "{{ data_node_file }}"
+        dest: /tmp
+        checksum: md5:{{ data_node_md5 }}
+      register: result
+
+    - name: Install required dependencies
+      apt:
+        name: libclass-methodmaker-perl
+        update_cache: True
+
+    - name: Install data node binary
+      apt:
+        deb: "{{ result.dest }}"
+
+    - name: Update /etc/my.cnf
+      template:
+        src: templates/node.my.cnf.j2
+        dest: /etc/my.cnf
+
+    - name: Create the mysql data directory
+      file:
+        path: /usr/local/mysql/data
+        state: directory
+
+    - name: Create systemd config for nbd
+      template:
+        src: templates/ndbd.service.j2
+        dest: /etc/systemd/system/ndbd.service
+      notify: Enable the ndbd service
+
+  handlers:
+    - name: Enable the ndbd service
+      service:
+        name: ndbd
+        state: started
+        enabled: True
+        daemon_reload: True # systemctl daemon-reload
+
+
+- hosts: ndb-client
+  become: True
+  vars:
+    remote_file_url: "https://dev.mysql.com/get/Downloads/MySQL-Cluster-7.6/mysql-cluster_7.6.9-1ubuntu18.04_amd64.deb-bundle.tar"
+    remote_file_checksum: 05cc46b2cc49fd391514be6ceb3412ae 
+  tasks:
+    - name: Download the required bundle
+      get_url:
+        url: "{{ remote_file_url }}"
+        dest: /tmp
+        checksum: md5:{{ remote_file_checksum }}
+      register: mysql_bundle
+
+    - name: Create the cluster bundle directory
+      file:
+        path: /tmp/mysql-cluster-bundle
+        state: directory
+
+    - name: Extract the cluster bundle
+      unarchive:
+        src: "{{ mysql_bundle.dest }}"
+        dest: /tmp/mysql-cluster-bundle
+        remote_src: True
+
+    - name: Install dependencies
+      apt:
+        name:
+          - libaio1
+          - libmecab2
+          - python-pymysql
+        update_cache: True
+
+    - name: Install the mysql cluster dependencies
+      apt:
+        deb: "{{ item }}"
+      loop:
+        - /tmp/mysql-cluster-bundle/mysql-common_7.6.9-1ubuntu18.04_amd64.deb
+        - /tmp/mysql-cluster-bundle/mysql-cluster-community-client_7.6.9-1ubuntu18.04_amd64.deb
+        - /tmp/mysql-cluster-bundle/mysql-client_7.6.9-1ubuntu18.04_amd64.deb
+
+    - shell: export DEBIAN_FRONTEND=noninteractive; dpkg -i /tmp/mysql-cluster-bundle/mysql-cluster-community-server_7.6.9-1ubuntu18.04_amd64.deb
+
+    - name: Install mysql
+      apt:
+        deb: /tmp/mysql-cluster-bundle/mysql-server_7.6.9-1ubuntu18.04_amd64.deb
+
+    - name: Configure the mysql server installation
+      template:
+        src: templates/client.my.cnf.j2
+        dest: /etc/mysql/my.cnf
+
+    - name: Restart mysql server
+      service:
+        name: mysql
+        state: restarted
+        enabled: True
+
+    - name: Set password for root
+      shell: mysql -u root -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY 'test';"
